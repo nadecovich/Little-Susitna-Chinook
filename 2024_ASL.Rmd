@@ -1,0 +1,240 @@
+---
+title: "2024 Little Susitna - Chinook"
+author: "Nick DeCovich"
+output: html_document
+---
+
+```{r setup,warning=FALSE,message=FALSE,include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+##rm(list = ls())
+```
+```{r packages and functions,include=FALSE}
+library(lubridate)
+library(WriteXLS)
+library(magrittr)
+library(dplyr)
+library(tidyverse)
+library(DT)
+source("H:\\Analyses\\L Su Chinook\\Little-Susitna-Chinook/ASL_funs.R")
+```
+
+
+
+```{r data import csv, include=FALSE}
+
+weir <- read_csv(".///weir.csv", col_types = cols(date = col_date(format = "%Y-%m-%d")))
+
+
+asl_dat <- read_csv(".///asl_dat.csv",
+                    col_types = cols(date = col_date(format = "%Y-%m-%d"),
+                                     age = col_character()))
+
+```
+
+```{r strata designation, include=FALSE}
+# Determining Strata Dates
+# Can change from 1-4 strata, by removing # and adjusting the dates. 
+# Using min and max weir data makes the code more transferrable across years and rivers 
+
+#Adjust number of strata and dates 
+strat1 <- interval(min(weir$date),ymd("2024-06-27 UTC"))  
+strat2 <- interval(ymd("2024-06-28 UTC"),ymd("2024-07-04 UTC"))
+strat3 <- interval(ymd("2024-07-05 UTC"), ymd("2024-07-08 UTC"))
+strat4 <- interval(ymd("2024-07-09 UTC"), max(weir$date))
+
+
+#Assign strata to dates within the ASL data sheet
+
+asl_dat$strata <- ifelse( asl_dat$date %within% strat1,1,asl_dat$strata)   
+asl_dat$strata <- ifelse( asl_dat$date %within% strat2,2,asl_dat$strata)
+asl_dat$strata <- ifelse( asl_dat$date %within% strat3,3,asl_dat$strata)
+asl_dat$strata <- ifelse( asl_dat$date %within% strat4,4,asl_dat$strata)   
+
+
+#Assign strata to dates to match ASL
+
+weir$strata <- ifelse( weir$date %within% strat1,1,weir$strata)   
+weir$strata <- ifelse( weir$date %within% strat2,2,weir$strata)
+weir$strata <- ifelse( weir$date %within% strat3,3,weir$strata)
+weir$strata <- ifelse( weir$date %within% strat4,4,weir$strata)
+
+weir_strata <- 
+  weir %>%
+  dplyr::group_by(strata) %>%
+  dplyr::summarise(total = sum(passage))
+weir_sum <- data.frame(total = sum(weir$passage))
+```
+
+
+
+```{r strata designation2, include=FALSE}
+# Add a single strata to use for creating estimates in the event that no strata is indicated
+
+#Adjust number of strata and dates 
+strat0 <- interval(min(weir$date),max(weir$date))  
+
+
+#Assign strata to dates within the ASL data sheet
+
+asl_dat$strata0 <- ifelse( asl_dat$date %within% strat0,1,asl_dat$strata0)   
+  
+#Assign strata to dates to match ASL
+
+weir$strata0 <- ifelse( weir$date %within% strat0,1,weir$strata0)   
+
+weir_strata0 <- 
+  weir %>%
+  dplyr::group_by(strata0) %>%
+  dplyr::summarise(total = sum(passage))
+weir_sum <- data.frame(total = sum(weir$passage))
+```
+
+## Chinook ASL
+
+```{r}
+knitr::kable(compare_strata(asl_dat, weir, passage)[, c("strata", "asl_dates", "asl_pct", "total_dates", "total_pct")], 
+             col.names = c("strata", "asl_dates", "asl_pct", "escapement_dates", "escapement_pct"))
+```
+
+```{r, , fig.width = 7, fig.height = 7}
+plot_ks(weir, "passage")
+ks.test(weir$passage, weir$samples)
+
+
+```
+
+
+The sampling was not proportional to the run. We will stratify the sampling according to the operational plan then test for differences in sex and age comp between strata. 
+
+
+### Chinook sex composition
+
+Likelihood ratio test indicates sex composition *did not* differ between time strata.
+
+```{r}
+t.sex<-table(asl_dat$strata,asl_dat$sex)
+addmargins(t.sex, c(1, 2))
+DescTools::GTest(t.sex)
+```
+
+Here is the Chinook sex-length table. We used an un-stratified estimate and met the precision objective.
+
+```{r}
+sl <- 
+  asl(asl_dat, weir_strata0, groupvars = "strata0") %>% 
+  #combine_strata() %>% 
+  tab_asl(totalname = "Weir Passage", output = "sl", display_cols = "stat")
+knitr::kable(sl)
+```
+
+```{r}
+ggplot(data=asl_dat,aes(x=length,color=sex))+geom_histogram(aes(y=..density..),bins = 20,position = "identity",alpha=.1)+geom_density(alpha=.2)+scale_x_continuous(breaks=seq(300,1000,100))+
+  labs(title="Histogram of length by sex")
+```
+
+
+### Chinook age composition
+
+Likelihood ratio tests indicate age composition *does not* differ between time strata. 
+
+```{r,echo=FALSE}
+clean_age <- asl_dat[asl_dat$age %in% c("1.1", "1.2", "1.3","1.4"), ] 
+                      
+#clean_age$nostrat <- as.numeric("1")
+t.age <- table(clean_age$strata,clean_age$age)
+lrt=DescTools::GTest(t.age)
+
+noquote("OBSERVED COUNTS")
+addmargins(lrt$observed,c(1,2))
+cat("\n")
+noquote("EXPECTED COUNTS")
+expected=as.table(round(lrt$expected))
+addmargins(expected,c(1,2))
+lrt
+```
+
+Here is the Chinook age-length table. We used an un-stratified estimate and met the precision objective.
+
+```{r}
+al0 <- asl(clean_age, weir_strata0, groupvars = "strata0")
+al<- 
+  al0 %>% 
+  #combine_strata() %>%
+  tab_asl(totalname = "Weir", output = "al", display_cols = "stat")
+knitr::kable(al)
+```
+```{r, echo=F}
+ggplot(data=clean_age,aes(x=length,color=age))+geom_histogram(aes(y=..density..),bins = 20,position = "identity",alpha=.1)+geom_density(alpha=.2)+scale_x_continuous(breaks=seq(300,1000,100))+
+  labs(title="Histogram of length by Age")
+```
+
+### Chinook age-sex composition
+
+Here is the Chinook age-sex-length table.
+
+```{r}
+chin_asl <- 
+  al0 %>%
+  #combine_strata() %>% 
+  tab_asl(totalname = "Weir", output = "asl") 
+knitr::kable(chin_asl)
+```
+
+
+
+```{r,warning=FALSE}
+library(openxlsx)
+#WriteXLS(x = c("sl", "al", "chin_asl"),ExcelFileName = ".//24_LSu_ASL_ND.xlsx",
+#                   SheetNames = c("Chinook sex comp", "Chinook age Comp", "Chinook agesex comp"),
+#                   AdjWidth = TRUE,
+ #                  BoldHeaderRow = TRUE,envir = parent.frame())
+
+WB = createWorkbook("Little Su Chinook ASL 2024")
+addWorksheet(WB,"Chinook Sex Comp")
+addWorksheet(WB,"Chinook Age Comp")
+addWorksheet(WB,"Chinook SexAge Comp")
+writeData(WB,sheet = 1,sl,colNames = TRUE)
+writeData(WB,sheet = 2,al,colNames = TRUE)
+writeData(WB,sheet = 3,chin_asl,colNames = TRUE)
+saveWorkbook(WB, ".//24_LSu_ASL_ND.xlsx", overwrite = TRUE)
+
+
+#write.xlsx(sl,file = ".//22 Deshka ASL_LFW10_4.xlsx",sheetName = "Chinook Sex Comp",colNames = TRUE)
+#write.xlsx(al,file = ".//22 Deshka ASL_LFW10_4.xlsx",sheetName = "Chinook Age Comp",append = TRUE)
+#write.xlsx(chin_asl,file = ".//22 Deshka ASL_LFW10_4.xlsx",sheetName = "Chinook AgeSex Comp",append = TRUE)
+
+```
+
+# ASL TABLES {.tabset}
+
+## Chinook Sex Comp
+```{r,echo=F}
+
+datatable(sl,extensions = "Buttons",
+          options=list(
+            dom = 'Brtip',
+  buttons = c("copy","csv","excel"), scrollX=TRUE,scrollY=TRUE,autoWidth = FALSE))
+```
+## Chinook Age Comp
+```{r,echo=FALSE}
+datatable(al,extensions = "Buttons",
+          options=list(
+            dom = 'Brtip',
+  buttons = c("copy","csv","excel"), scrollX=TRUE,scrollY=TRUE,autoWidth = FALSE))
+```
+## Chinook SexAge Comp
+```{r,echo=FALSE}
+datatable(chin_asl,extensions = "Buttons",
+          options=list(
+            dom = 'Brtip',
+  buttons = c("copy","csv","excel"), scrollX=TRUE,scrollY=TRUE,autoWidth = FALSE,pageLength=20))
+```
+
+# {-}
+
+```{r}
+library(downloadthis)
+list("Chinook Sex Comp"=sl,"Chinook Age Comp" = al,"Chinook SexAge Comp"=chin_asl)%>%
+download_this(button_label = "ASL COMPS EXCEL WORKBOOK",output_extension = ".xlsx",self_contained = TRUE)
+
+```
